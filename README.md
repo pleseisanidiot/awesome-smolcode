@@ -1,220 +1,237 @@
-# Smolcode
+# awesome-smolcode
 
-A small C11 terminal coding agent. Exactly three tools: `read`, `write`, `sh`.
-Conversation files are plain text. Features are direct C source changes.
+A practical, extensible descendant of [smolcode](https://github.com/pleseisanidiot/smolcode).
+Still easy to understand. No longer trying to be *that* smol.
 
-## Build and run
+**CLI + local GUI + Telegram · scoped AGENTS.md · skills · MCP · executable plugins · permissions · Linux sandbox**
 
-Requires Linux, GCC or Clang, Make, and libcurl development headers/library.
-The JSON parser is embedded C; there are no other dependencies.
+The original C11 agent and its commit history are retained. The extended runtime
+is a modular Python package with **no third-party runtime dependencies**. Both
+runtimes are available; the new permissions and integrations apply to
+`awesome-smolcode`, not the original `./smolcode` binary.
+
+![Local browser GUI, captured using a mock model](docs/gui.png)
+
+## Get started
+
+Requires Linux and Python 3.11+. Shell, MCP, and plugin subprocesses require
+[bubblewrap](https://github.com/containers/bubblewrap) by default.
+
+```sh
+git clone https://github.com/pleseisanidiot/awesome-smolcode.git
+cd awesome-smolcode
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+# Debian/Ubuntu: sudo apt-get install bubblewrap
+
+# Local Ollama; install the model separately with ollama pull qwen3.5:9b.
+export OPENAI_API_KEY=ollama
+awesome-smolcode doctor
+awesome-smolcode --workspace /path/to/project chat
+awesome-smolcode --workspace /path/to/project gui --open
+```
+
+Run without `chat` to start interactive chat. Global options go **before** the
+subcommand. `python -m awesome_smolcode` also works.
+
+Other OpenAI-compatible Chat Completions endpoints work through
+`SMOLCODE_API_URL` and `SMOLCODE_MODEL`, configuration, or CLI flags. Remote
+endpoints must use HTTPS. Keys are read from `OPENAI_API_KEY`.
+
+```sh
+awesome-smolcode --permission read-only chat 'Review this project'
+awesome-smolcode --session feature-login chat
+awesome-smolcode --model your-model --api-url https://your-provider.example/v1/chat/completions chat
+```
+
+## What is included
+
+| Feature | Behavior |
+| --- | --- |
+| Terminal | Interactive or one-shot tasks; tool activity; cancellation; resumable sessions |
+| GUI | Local browser chat, tool results, runtime settings, and Allow once / Deny buttons |
+| Telegram | Long polling, mandatory user allowlist, private chats, separate sessions per user |
+| AGENTS.md | Root instructions plus parent/deeper scopes discovered when files are accessed |
+| Skills | SKILL.md catalog with descriptions; guidance loaded through `load_skill` |
+| MCP | Stdio JSON-RPC initialization, paginated tool discovery, calls, and process cleanup |
+| Plugins | Configured executable tools receiving JSON on stdin and returning JSON on stdout |
+| Permissions | `read-only`, `ask` (default), and explicitly selected `auto` |
+| Sandbox | Required bubblewrap by default, private namespaces, workspace mount, networking off |
+| Persistence | Private atomic checkpoints, session locks, recovery without replaying pending calls |
+
+Tools are `read`, `write`, `sh`, `list_files`, `load_skill`, plus enabled extension
+tools. Writes are atomic and preserve an existing executable file's permissions.
+File tools reject traversal, symlinks, and protected repository metadata. Parent
+directories must already exist. Read and write content is limited to 64 KiB by
+default; shell output is truncated at that limit. The loop stops after 64 calls
+per user turn by default. The runtime never silently trims model history.
+
+## Permissions and sandbox
+
+`ask` allows workspace reads and skill loading, then requires a single-use
+approval for each write, shell command, plugin call, MCP server launch, and MCP
+tool call. Noninteractive terminal input cannot approve a request. GUI and
+Telegram approvals expire after two minutes and deny by default.
+
+`read-only` denies those operations, including MCP startup: server discovery can
+itself have side effects. `auto` permits them without prompting and is an explicit
+operator choice. It does not disable the sandbox.
+
+Bubblewrap exposes the workspace writable and system runtime directories read
+only, creates isolated PID/user/network namespaces and temporary storage, and
+mounts normal `.git` and conversation metadata read only. The user's home and
+agent state directory are outside the sandbox. Only a minimal environment is
+passed; `OPENAI_API_KEY` and `TELEGRAM_BOT_TOKEN` are never inherited by extensions.
+Configured extensions may explicitly receive other environment variables.
+
+`network = true` enables subprocess networking. Model API and Telegram connections
+run in the parent process and work independently of this flag. If bubblewrap is
+missing or user namespaces are disabled, subprocess execution fails; it never
+silently falls back. `doctor` runs a real sandbox probe. On an unsupported host,
+`--sandbox none` explicitly runs subprocesses with the operator's host access.
+
+This is process isolation, not a VM or a hostile multi-user service. Workspace
+files are visible to approved commands, so choose a workspace that contains the
+files you intend to expose. Sessions for different Telegram users share that
+workspace; use separate processes/workspaces for separate trust boundaries.
+The original C binary retains upstream's unrestricted tool behavior.
+
+## Telegram
+
+Create a bot through BotFather, set its token in the environment, and pass your
+numeric Telegram user ID. Never put a token in source or the example config.
+
+```sh
+export TELEGRAM_BOT_TOKEN='your-bot-token'
+export OPENAI_API_KEY=ollama
+awesome-smolcode --workspace /path/to/project telegram --allow-user 123456789
+# Repeat --allow-user for additional explicitly trusted users.
+```
+
+Unauthorized users and group chats are ignored. Commands:
+
+- `/start` or `/help`: usage.
+- `/status`: workspace, model, permissions, sandbox, and network setting.
+- `/new`: select a fresh conversation; the selection survives a restart.
+- `/approve ID` or `/deny ID`: decide one pending request from your private chat.
+
+The polling loop keeps receiving approval messages while a worker runs. Only one
+turn per user runs at a time. Update receipt is checkpointed before dispatch to
+avoid replaying side effects after a restart; a crash between receipt and dispatch
+can lose that update. Pending conversation calls recover with an explicit unknown
+status. Telegram is an adapter, not a hosted bot deployment; keep the process
+running yourself. A live bot token is needed to test against Telegram's service.
+
+## GUI
+
+```sh
+awesome-smolcode --workspace /path/to/project gui --port 8080 --open
+```
+
+Open the printed token-bearing URL. The server binds to `127.0.0.1`; every API
+request needs its random bearer token. The browser keeps it in session storage
+and removes it from the URL. Cross-origin POSTs and unexpected Host headers are
+rejected. There are no external frontend scripts, fonts, analytics, or CDN calls.
+The GUI supports one active session; choose it with `--session` at startup.
+
+## Instructions and skills
+
+Put root instructions in `AGENTS.md`. Deeper `AGENTS.md` files apply to their
+subdirectories and override parent guidance. Reading files discovers those scopes
+for the next model request. A write into a newly discovered instruction scope is
+rejected until the next request has presented its guidance to the model. Shell
+commands are arbitrary: the model is instructed to read relevant guidance before
+using them, but their filesystem paths cannot be inferred reliably.
+
+Skills are discovered from `.agents/skills/*/SKILL.md` in the workspace,
+`~/.config/awesome-smolcode/skills/*/SKILL.md`, and configured `skill_dirs`. A simple
+front matter format supports single-line `name` and `description` fields. Full
+skill text is loaded only when the model calls `load_skill`. See
+[the example review skill](examples/skills/review/SKILL.md).
+
+Project instructions and skills guide the model; they cannot change permission
+settings or authorize extension launches. Bundle helper files alongside a skill
+and use ordinary workspace tools to inspect them. Skills are guidance, not an
+automatic arbitrary-code installer.
+
+## Configuration, MCP, and plugins
+
+Copy [examples/config.toml](examples/config.toml) to
+`~/.config/awesome-smolcode/config.toml`, or select an explicit trusted file with
+`--config /path/to/config.toml`. Project config is never auto-loaded. CLI overrides
+configuration; model environment variables supply defaults when those settings
+are absent. Unknown keys, invalid limits, missing explicit files, and unsafe
+remote HTTP model endpoints fail with an error.
+
+MCP servers must speak **newline-delimited stdio JSON-RPC**. HTTP/SSE transports,
+client sampling, resource subscription, and elicitation are not implemented.
+Initialization advertises protocol version `2024-11-05`. Tools appear as
+`mcp_SERVER_TOOL`; servers are started on the first turn after approval.
+
+```toml
+[mcp.example]
+command = ["python3", "/absolute/path/in/workspace/mcp_server.py"]
+env = []
+
+[plugins.line_count]
+description = "Count lines in a workspace file"
+command = ["python3", "/absolute/path/in/workspace/line_count.py"]
+parameters = {type = "object", properties = {path = {type = "string"}}, required = ["path"], additionalProperties = false}
+```
+
+Use paths visible inside the sandbox. Python/Node environments under your host
+home are not mounted; use system interpreters or install dependencies in the
+workspace. Tool names must contain only letters, digits, underscores, or hyphens
+and be at most 64 characters after prefixing. Restart after changing config or
+when an MCP server fails. Plugin tools appear as `plugin_NAME`.
+
+Plugins receive one request such as
+`{"tool":"plugin_line_count","arguments":{"path":"main.c"}}` on stdin and must
+print one JSON value on stdout; diagnostics should go to stderr. See
+[examples/plugins/line_count.py](examples/plugins/line_count.py). Extension input
+is capped at 4096 bytes, responses/output at the configured output limit, and
+operations at the configured timeout. Extension argument schemas are advertised
+to the model; extensions must validate their own domain-specific values.
+
+## Sessions
+
+State is stored outside the workspace under
+`${XDG_STATE_HOME:-~/.local/state}/awesome-smolcode/<workspace-hash>/`. Directories
+are mode `0700`, checkpoints mode `0600`. The workspace path selects the state
+namespace; `--session NAME` selects the conversation. Histories are JSON and are
+independent of upstream's `.smolcode/*.txt` format; automatic migration is not
+included. Never manually edit a session while it is running.
+
+The user request, assistant tool batch, and each tool result are checkpointed in
+that order. Restart never replays a pending call. The next turn records that its
+execution status is unknown and tells the model to inspect current state. Session
+locks prevent simultaneous processes from overwriting the same conversation.
+Model and bot credentials are redacted from persisted messages and runtime events.
+
+## Original C runtime, review, and checks
+
+The preserved C program still builds with `make`; run it using `./smolcode`.
+It requires a C11 compiler and libcurl development headers. Its original
+instructions are in [docs/UPSTREAM.md](docs/UPSTREAM.md). The architecture review,
+concrete findings, and decisions are in [docs/REVIEW.md](docs/REVIEW.md).
 
 ```sh
 make
-export OPENAI_API_KEY="ollama"
-./smolcode
-```
-
-Run from the directory you want to work in. Enter one request per input line;
-assistant responses can contain any number of lines. Empty input is ignored.
-Leading `<think>...</think>` reasoning blocks are hidden in terminal responses;
-the original responses remain in conversation history. An unfinished leading
-reasoning block is hidden too; if no answer follows, a notice is printed.
-Literal tags elsewhere in an answer remain visible.
-Paired `**text**` within a line is rendered bold on terminals and as plain text when redirected
-or when `TERM=dumb`. Unmatched markers and backtick code are left literal.
-Saved conversations and model history retain the original Markdown.
-Ctrl+D exits. Ctrl+C cancels a request or tool operation and returns to the
-prompt. Conversation history is saved in the current project's `.smolcode/`,
-including tool results and prior requests that failed. No history is silently
-trimmed; if the provider's context limit is reached, its error is reported.
-
-Set `SMOLCODE_MODEL` and `SMOLCODE_API_URL` to choose a model and endpoint without
-recompiling. Each unset variable falls back to its default in `config.h`;
-explicitly empty values produce a startup error. The endpoint must use `http://`
-or `https://`. Settings are read once at startup, including when resuming.
-
-```sh
-export SMOLCODE_API_URL="http://localhost:11434/v1/chat/completions"
-export SMOLCODE_MODEL="your-installed-model" # Choose a name from ollama list.
-export OPENAI_API_KEY="ollama"
-./smolcode
-```
-
-Edit `config.h` and run `make` to change the fallback model/endpoint, credential
-environment variable, token limit, tool output limit, or command timeout. The
-model is an arbitrary string. The default is `qwen3.5:9b` on local Ollama at
-`http://127.0.0.1:11434/v1/chat/completions`; that model must be installed in the
-running Ollama instance. Smolcode requires a nonempty
-`OPENAI_API_KEY`; use the placeholder `ollama` for this local endpoint. For a
-remote authenticated provider, set its real key instead.
-The only command-line option is `--resume`.
-
-```sh
-make clean
-make CC=clang
-# Optional, performed by the human:
-sudo make install
-```
-
-Installation defaults to `/usr/local/bin`; `PREFIX` and `DESTDIR` are supported.
-
-## Conversations and instructions
-
-`smolcode` starts a new conversation and prints its random three-word name, such
-as `amber-quiet-river`. It saves to `.smolcode/amber-quiet-river.txt` in the current
-working directory. To resume, run from that same project directory:
-
-```sh
-smolcode --resume amber-quiet-river
-```
-
-Use `ls .smolcode/*.txt` to find conversations and any text editor to read them.
-Each file contains role-labeled messages and native tool-call metadata. Message
-contents retain real line breaks, quotes, and Unicode; backslashes are doubled
-and nontext control bytes use `\xHH`. Small headers hold byte counts so text that
-resembles a role header cannot corrupt the restored history. These are readable
-text files, not a database or a JSON conversation dump. Manual edits must also
-update the byte counts. Malformed or missing conversations produce a clear error;
-malformed files are left unchanged.
-
-Conversation files are created with permissions `0600`, and new `.smolcode/`
-directories with `0700`. Each checkpoint uses a temporary file and atomic
-replacement. Smolcode saves the user message before sending it, the assistant's
-requested calls before executing them, and every result afterward. If saving
-fails, it stops rather than silently continuing without persistence. Use one
-process per conversation; simultaneous writers are not coordinated.
-
-If a process ends with a pending call, resume marks that call's execution status
-as unknown. It never automatically replays the command or claims it succeeded:
-the model must inspect current state before retrying. Completed tool results and
-call IDs are restored. The configured API key is masked in saved fields.
-
-Put project instructions and reusable guidance in the current directory's
-`AGENTS.md`. Smolcode reads that file at startup, including when resuming, and adds
-it to the model's system instructions. Missing `AGENTS.md` is fine; unreadable or
-nonregular files produce an error. System instructions are freshly loaded rather
-than copied from an old conversation. There is no skill loader or add-on system;
-new behavior means patching the C source and recompiling. Keep the project under
-5,000 lines of code.
-
-## Tools
-
-| Tool | Arguments | Result |
-| --- | --- | --- |
-| `read` | `{"path":"main.c","start_line":10,"end_line":40}` | Selected lines of a regular file, or a clear error. |
-| `write` | `{"path":"main.c","content":"..."}` | Creates or overwrites that file, reports bytes written or an error. |
-| `sh` | `{"command":"make"}` | Combined stdout/stderr, exit status or signal, timeout/interruption information. |
-
-Arguments must be JSON objects with the stated fields and no extra fields.
-`read` requires a string `path`; its optional `start_line` and `end_line` must be
-positive integers, with `end_line >= start_line`. Lines are one-based and both
-bounds are inclusive. Omitted bounds mean line 1 and EOF; omitting both reads the
-whole file. A range ending beyond EOF returns the remaining contents. A starting
-line beyond EOF (including a range in an empty file) returns an explicit error.
-Selected bytes preserve line breaks, including CRLF and a final unterminated line.
-Paths and commands cannot be empty or contain NUL. File contents can contain NUL,
-Unicode, quotes, percent signs, and line breaks; writes preserve their decoded
-bytes. Parent directories must already exist. File tools reject nonregular files.
-Writes are direct, not atomic: interruption or disk errors can leave a partial
-file, which is reported.
-
-`read` refuses selections larger than `MAX_TOOL_OUTPUT` (default 65,536 bytes),
-returning an explicit error with no partial contents. Read large files in chunks
-using `start_line`/`end_line`; the reader scans with bounded memory rather than
-loading the whole file. A single line exceeding the limit requires `sh` with
-`head`, `cut`, or another command to inspect portions. Shell capture keeps the first `MAX_TOOL_OUTPUT`
-bytes, drains the remaining output, and appends an explicit truncation notice.
-UTF-8 is preserved. Non-UTF-8 output bytes are represented as Unicode U+00XX in
-the JSON sent to the model; use `sh` with `od`/`xxd` for an unambiguous binary dump.
-
-Commands run through `/bin/sh -c`, with stdin connected to `/dev/null`. Commands
-that require interactive input are unsuitable. Each command gets a separate
-process group. Timeout (default 60 seconds), Ctrl+C, and normal shell exit clean
-up remaining jobs in that group; Linux child reaping prevents ordinary background
-jobs from becoming zombies. Commands that deliberately detach into another
-process group can escape this cleanup. File tools check for cancellation between
-I/O operations; an OS-level blocking disk operation may delay cancellation.
-
-## API behavior
-
-Uses non-streaming OpenAI-compatible Chat Completions with native function tools.
-Multiple requested calls execute in order, and their results retain the original
-call IDs and `tool` roles. Tool contents are JSON-escaped data, never inserted into
-the system prompt or treated as executable instructions by the C loop. Unknown
-tools and invalid arguments produce error results, not fabricated successes.
-Malformed message/call structure is rejected before executing the batch.
-
-Requests start with `max_completion_tokens`. If the endpoint explicitly rejects
-that parameter, Smolcode retries with `max_tokens`. If that is also rejected, it
-retries without a token parameter, prints a notice, and uses the provider's
-default output limit. The successful setting is remembered in memory. Other
-API/HTTP errors, rate limits, and transport failures are reported without
-automatic retry; enter a new request to continue. Connection timeout is 15
-seconds and total request timeout is 300 seconds. For HTTPS endpoints, certificate
-verification is enabled by libcurl; redirects are not followed.
-
-A user turn stops after 64 tool calls. Completed results and explicit results for
-unexecuted calls remain in history, so the next request can continue coherently.
-
-The protocol follows the [official Chat Completions reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
-
-## Security
-
-**This is not a sandbox.** Model commands execute with the current user's
-permissions and can read, modify, or delete accessible files and access the
-network. File contents and command output can be sent to the configured API.
-Only use this agent where you accept that access; do not run it as root.
-
-Smolcode does not invoke privilege elevation. Shell children use Linux
-`no_new_privs`, preventing privilege gains through setuid executables or file
-capabilities. This does not restrict normal user permissions or provide a
-filesystem/network sandbox. The configured API key comes only from the
-environment, is removed from the shell child's environment, and is masked if
-it appears in displayed text or returned tool output. Commands can still inspect
-other accessible files/processes; masking is not a secret isolation boundary.
-Conversation text and tool results are saved in `.smolcode/`; they may contain
-sensitive project information. The configured API key is masked before saving.
-
-## Verification
-
-```sh
 make check
-# Optional sanitizer run (Clang):
-CC=clang TEST_CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
-  ASAN_OPTIONS='detect_leaks=1:halt_on_error=1' \
-  UBSAN_OPTIONS='halt_on_error=1' sh tests/run.sh
+python -m unittest discover -s tests_python -v
+# Optional browser smoke: install playwright and provide /usr/bin/chromium.
+python tests_python/browser_smoke.py
 ```
 
-Tests use C and POSIX shell, a dummy key, a one-second command timeout, and a
-disposable source/build directory. Production `config.h` and the executable are
-unchanged. The C mock server exchanges actual HTTP requests/responses with
-libcurl over local Unix socket pairs. A test-only curl wrapper supplies connected
-descriptors; a test-only I/O shim uses local IPC `read`/`write` because the build
-session blocks TCP, listener binding, and socket `send`/`recv`. Neither wrapper
-is linked into the production executable.
+Verified: upstream's **881 assertions**, **31 runtime tests**, a real bubblewrap
+isolation probe, and a Chromium chat/approval flow including mobile layout. Model,
+MCP, and plugin tests use local mocks; Telegram service calls require operator
+credentials. The GUI screenshot above uses a mock model. CI runs the C and Python
+checks and installation; sandbox tests explicitly skip if namespaces are not
+available on the runner.
 
-Coverage includes terminal input/EOF, prompt and operation interruption,
-existing/missing/oversized files, line ranges across buffer boundaries, omitted
-bounds, EOF/CRLF/NUL handling, invalid bounds, exact creation/overwrite, a 1 MiB write,
-successful/failing/missing shell commands, combined output, output truncation,
-timeout, background child cleanup, JSON escapes/Unicode/NUL, malformed JSON,
-multiline and large assistant responses, multiple conversation turns, several
-tools per turn, successive tool rounds, call IDs/roles, rejected parameters,
-HTTP/rate-limit/transport failures, invalid/unknown tools, and the loop limit.
-Tests also restart the executable with `--resume`, verify prior calls/results and
-new `AGENTS.md` instructions reach the API, verify default and environment model/
-endpoint settings (including escaped model names and invalid values), round-trip multiline/Unicode/NUL
-contents, check random names and file permissions, repair interrupted histories
-without replay, and reject malformed files and report save failures.
-Mock responses also verify reasoning blocks are hidden before tool calls and
-final answers, retained in history, and handled when repeated or unfinished.
-Bold output is checked through a pseudo-terminal and redirected pipes, including
-unmatched markers, literal code, and unchanged Markdown in saved conversations.
-
-These are mocked integration tests. No live model, real credential, external
-provider connection, or TLS exchange was used in verification.
-
-Both GCC and Clang builds passed with warnings treated as errors. The suite also
-passed AddressSanitizer and UndefinedBehaviorSanitizer with leak detection
-disabled; this host blocks LeakSanitizer's required ptrace support. Clang's static
-analyzer reported no findings.
+This repository preserves upstream commit `85723f7`. Since the upstream belongs
+to the same GitHub account, GitHub does not represent this derivative as a native
+fork; its original history and upstream attribution are retained. No new license
+has been assigned; the upstream snapshot has no license file.

@@ -1,0 +1,21 @@
+model = "qwen3.5:9b"
+api_url = "http://127.0.0.1:11434/v1/chat/completions"
+permission = "ask" # read-only | ask | auto
+sandbox = "required" # required bubblewrap | none (explicitly unrestricted subprocesses)
+network = false # subprocess networking; model and Telegram use their own connections
+max_calls = 64
+timeout = 60
+max_output = 65536
+max_tokens = 8192
+# skill_dirs = ["/absolute/path/to/skills"]
+
+# MCP command arrays are trusted configuration, never discovered from a project.
+# Commands run in the sandbox, so install executables under /usr or the workspace.
+# [mcp.filesystem]
+# command = ["node", "/absolute/workspace/server.js"]
+# env = [] # explicit environment variable names; model/bot keys cannot be passed
+
+# [plugins.line_count]
+# description = "Count lines in a workspace file"
+# command = ["python3", "examples/plugins/line_count.py"]
+# parameters = {type = "object", properties = {path = {type = "string"}}, required = ["path"], additionalProperties = false}

@@ -1,3 +1,12 @@
 /smolcode
 *.o
 /.smolcode/
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+build/
+dist/
+.env
+config.local.toml
+.awesome-smolcode/
